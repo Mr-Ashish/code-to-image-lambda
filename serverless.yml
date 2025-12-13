@@ -1,0 +1,54 @@
+service: code-to-image-api
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 2048 # 2GB required for Puppeteer/Chrome
+  timeout: 30 # 30 seconds max execution time
+  environment:
+    API_TOKENS: ${env:API_TOKENS, ''} # Comma-separated list of valid tokens (read from .env file)
+    NODE_ENV: production
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: '*'
+
+functions:
+  generateImage:
+    handler: src/index.handler
+    layers:
+      # Pre-compiled Chromium binary for Lambda
+      # ARN for us-east-1 - update for other regions
+      - arn:aws:lambda:${self:provider.region}:764866452798:layer:chrome-aws-lambda:43
+    events:
+      - http:
+          path: /generate
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    noPrependStageInUrl: true

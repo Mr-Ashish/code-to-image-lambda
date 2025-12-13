@@ -1,0 +1,39 @@
+{
+  "name": "code-to-image-lambda",
+  "version": "1.0.0",
+  "description": "Serverless AWS Lambda API to convert code snippets into beautiful syntax-highlighted images (PNG/SVG)",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "serverless deploy",
+    "deploy:dev": "serverless deploy --stage dev",
+    "deploy:prod": "serverless deploy --stage prod",
+    "local": "serverless offline",
+    "logs": "serverless logs -f generateImage -t",
+    "remove": "serverless remove"
+  },
+  "keywords": [
+    "code",
+    "image",
+    "syntax-highlighting",
+    "screenshot",
+    "lambda",
+    "serverless",
+    "shiki",
+    "puppeteer"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@sparticuz/chromium": "^119.0.2",
+    "puppeteer-core": "^21.11.0",
+    "shiki": "^1.24.2"
+  },
+  "devDependencies": {
+    "serverless": "^3.38.0",
+    "serverless-dotenv-plugin": "^6.0.0",
+    "serverless-offline": "^13.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
