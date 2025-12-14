@@ -10,8 +10,13 @@ provider:
   memorySize: 2048 # 2GB required for Puppeteer/Chrome
   timeout: 30 # 30 seconds max execution time
   environment:
-    API_TOKENS: ${env:API_TOKENS, ''} # Comma-separated list of valid tokens (read from .env file)
     NODE_ENV: production
+    DB_SECRET_NAME: ${env:DB_SECRET_NAME, ''} # Name of secret in AWS Secrets Manager
+    TOKEN_CACHE_TTL: ${env:TOKEN_CACHE_TTL, '300'} # Cache TTL in seconds (default: 5 minutes)
+    DB_POOL_SIZE: ${env:DB_POOL_SIZE, '2'} # Connection pool size (default: 2)
+    DB_CONNECTION_TIMEOUT: ${env:DB_CONNECTION_TIMEOUT, '10000'} # Connection timeout in ms
+    DB_IDLE_TIMEOUT: ${env:DB_IDLE_TIMEOUT, '30000'} # Idle timeout in ms
+    DB_SSL: ${env:DB_SSL, 'false'} # Enable SSL for database connection
   iam:
     role:
       statements:
@@ -21,6 +26,14 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: '*'
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource:
+            # For production, replace '*' with your AWS account ID and specific secret ARN
+            # Example: 'arn:aws:secretsmanager:${self:provider.region}:123456789012:secret:your-db-secret-name-abc123'
+            # The wildcard pattern below allows access to any secret in the region (less secure but flexible)
+            - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:*'
 
 functions:
   generateImage:

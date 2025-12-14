@@ -3,20 +3,18 @@
  * Converts code snippets into beautiful syntax-highlighted images
  */
 
-const { buildHtmlTemplate } = require('./htmlTemplate')
-const { generateSVG } = require('./svgGenerator')
-const { generatePNG } = require('./imageGenerator')
-
-// Validate API token from environment variable
-const VALID_TOKENS = process.env.API_TOKENS ? process.env.API_TOKENS.split(',') : []
+const { buildHtmlTemplate } = require('./htmlTemplate');
+const { generateSVG } = require('./svgGenerator');
+const { generatePNG } = require('./imageGenerator');
+const { verifyToken } = require('./db/tokenVerifier');
 
 // Lazy load shiki (ES module) - cache for warm Lambda invocations
-let shikiModule = null
+let shikiModule = null;
 async function getShiki() {
   if (!shikiModule) {
-    shikiModule = await import('shiki')
+    shikiModule = await import('shiki');
   }
-  return shikiModule
+  return shikiModule;
 }
 
 /**
@@ -25,18 +23,19 @@ async function getShiki() {
 exports.handler = async (event) => {
   try {
     // Parse request body
-    let body
+    let body;
     try {
-      body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body
+      body =
+        typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
     } catch (error) {
       return {
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
         },
-        body: JSON.stringify({ error: 'Invalid JSON in request body' })
-      }
+        body: JSON.stringify({ error: 'Invalid JSON in request body' }),
+      };
     }
 
     // Extract parameters
@@ -49,19 +48,51 @@ exports.handler = async (event) => {
       background,
       padding,
       showLineNumbers,
-      showWindowControls
-    } = body
+      showWindowControls,
+    } = body;
 
     // Validate token
-    if (!token || !VALID_TOKENS.includes(token)) {
+    if (!token) {
       return {
         statusCode: 401,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
         },
-        body: JSON.stringify({ error: 'Invalid or missing API token' })
-      }
+        body: JSON.stringify({ error: 'Missing API token' }),
+      };
+    }
+
+    // Verify token against database
+    let tokenVerification;
+    try {
+      tokenVerification = await verifyToken(token);
+    } catch (error) {
+      console.error('Token verification error:', error);
+      return {
+        statusCode: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          error: 'Service temporarily unavailable',
+          message: 'Unable to verify token. Please try again later.',
+        }),
+      };
+    }
+
+    if (!tokenVerification.isValid) {
+      const errorMessage =
+        tokenVerification.error || 'Invalid or missing API token';
+      return {
+        statusCode: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ error: errorMessage }),
+      };
     }
 
     // Validate required fields
@@ -70,10 +101,10 @@ exports.handler = async (event) => {
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
         },
-        body: JSON.stringify({ error: 'Missing required field: code' })
-      }
+        body: JSON.stringify({ error: 'Missing required field: code' }),
+      };
     }
 
     // Validate format
@@ -82,37 +113,42 @@ exports.handler = async (event) => {
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
-          error: 'Invalid format. Must be "svg" or "png"'
-        })
-      }
+          error: 'Invalid format. Must be "svg" or "png"',
+        }),
+      };
     }
 
-    console.log(`Processing ${format.toUpperCase()} request for ${language} code (${code.length} chars)`)
+    console.log(
+      `Processing ${format.toUpperCase()} request for ${language} code (${
+        code.length
+      } chars)`
+    );
 
     // Step 1: Syntax highlight with Shiki
-    let highlightedCode
+    let highlightedCode;
     try {
-      const shiki = await getShiki()
+      const shiki = await getShiki();
       highlightedCode = await shiki.codeToHtml(code, {
         lang: language,
-        theme: theme
-      })
+        theme: theme,
+      });
     } catch (error) {
-      console.error('Shiki highlighting error:', error)
+      console.error('Shiki highlighting error:', error);
       return {
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
-          error: 'Syntax highlighting failed. Check language and theme parameters.',
-          details: error.message
-        })
-      }
+          error:
+            'Syntax highlighting failed. Check language and theme parameters.',
+          details: error.message,
+        }),
+      };
     }
 
     // Step 2: Build HTML template
@@ -120,22 +156,22 @@ exports.handler = async (event) => {
       background,
       padding,
       showLineNumbers,
-      showWindowControls
-    })
+      showWindowControls,
+    });
 
     // Step 3: Generate image based on format
-    let imageData, contentType
+    let imageData, contentType;
 
     if (format === 'png') {
       // Generate PNG using Puppeteer
-      console.log('Generating PNG with Puppeteer...')
-      imageData = await generatePNG(html)
-      contentType = 'image/png'
+      console.log('Generating PNG with Puppeteer...');
+      imageData = await generatePNG(html);
+      contentType = 'image/png';
     } else {
       // Generate SVG (fast, no browser needed)
-      console.log('Generating SVG...')
-      imageData = generateSVG(html)
-      contentType = 'image/svg+xml'
+      console.log('Generating SVG...');
+      imageData = generateSVG(html);
+      contentType = 'image/svg+xml';
     }
 
     // Step 4: Return binary response
@@ -144,26 +180,26 @@ exports.handler = async (event) => {
       headers: {
         'Content-Type': contentType,
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
+        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
       },
-      body: format === 'png'
-        ? imageData.toString('base64')  // PNG as base64 for API Gateway
-        : imageData,                     // SVG as string
-      isBase64Encoded: format === 'png'
-    }
-
+      body:
+        format === 'png'
+          ? imageData.toString('base64') // PNG as base64 for API Gateway
+          : imageData, // SVG as string
+      isBase64Encoded: format === 'png',
+    };
   } catch (error) {
-    console.error('Lambda handler error:', error)
+    console.error('Lambda handler error:', error);
     return {
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         error: 'Internal server error',
-        message: error.message
-      })
-    }
+        message: error.message,
+      }),
+    };
   }
-}
+};
