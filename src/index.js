@@ -6,7 +6,7 @@
 const { buildHtmlTemplate } = require('./htmlTemplate');
 const { generateSVG } = require('./svgGenerator');
 const { generatePNG } = require('./imageGenerator');
-const { verifyToken } = require('./db/tokenVerifier');
+const { validateApiKey } = require('./auth/jaasClient');
 
 // Lazy load shiki (ES module) - cache for warm Lambda invocations
 let shikiModule = null;
@@ -38,10 +38,74 @@ exports.handler = async (event) => {
       };
     }
 
-    // Extract parameters
+    // Extract API key from headers (standard practice: X-API-Key or Authorization Bearer)
+    const apiKey =
+      event.headers['x-api-key'] ||
+      event.headers['X-API-Key'] ||
+      (event.headers['authorization'] || event.headers['Authorization'] || '')
+        .replace(/^Bearer\s+/i, '')
+        .trim();
+
+    if (!apiKey) {
+      return {
+        statusCode: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          error: 'API key is required',
+          message: 'Please provide your API key via X-API-Key header or Authorization Bearer token',
+        }),
+      };
+    }
+
+    // Extract client IP for logging (if available)
+    const clientIp =
+      event.requestContext?.identity?.sourceIp ||
+      event.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      event.headers['X-Forwarded-For']?.split(',')[0]?.trim() ||
+      null;
+
+    // Validate API key with JAAS
+    let authResult;
+    try {
+      authResult = await validateApiKey(apiKey, clientIp);
+    } catch (error) {
+      console.error('API key validation error:', error);
+      return {
+        statusCode: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          error: 'Authentication service temporarily unavailable',
+          message: 'Please try again later.',
+        }),
+      };
+    }
+
+    if (!authResult.valid) {
+      const statusCode = authResult.statusCode || 401;
+      return {
+        statusCode: statusCode,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          error: authResult.error || 'Invalid API key',
+          ...(authResult.remainingQuota !== undefined && {
+            remainingQuota: authResult.remainingQuota,
+          }),
+        }),
+      };
+    }
+
+    // Extract parameters from body
     const {
       code,
-      token,
       language = 'javascript',
       theme = 'github-dark',
       format = 'svg',
@@ -50,50 +114,6 @@ exports.handler = async (event) => {
       showLineNumbers,
       showWindowControls,
     } = body;
-
-    // Validate token
-    if (!token) {
-      return {
-        statusCode: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-        body: JSON.stringify({ error: 'Missing API token' }),
-      };
-    }
-
-    // Verify token against database
-    let tokenVerification;
-    try {
-      tokenVerification = await verifyToken(token);
-    } catch (error) {
-      console.error('Token verification error:', error);
-      return {
-        statusCode: 503,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-        body: JSON.stringify({
-          error: 'Service temporarily unavailable',
-          message: 'Unable to verify token. Please try again later.',
-        }),
-      };
-    }
-
-    if (!tokenVerification.isValid) {
-      const errorMessage =
-        tokenVerification.error || 'Invalid or missing API token';
-      return {
-        statusCode: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-        body: JSON.stringify({ error: errorMessage }),
-      };
-    }
 
     // Validate required fields
     if (!code) {
@@ -174,14 +194,21 @@ exports.handler = async (event) => {
       contentType = 'image/svg+xml';
     }
 
-    // Step 4: Return binary response
+    // Step 4: Return binary response with quota information in headers
+    const headers = {
+      'Content-Type': contentType,
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+    };
+
+    // Add quota information to response headers (if available)
+    if (authResult.remainingQuota !== undefined) {
+      headers['X-RateLimit-Remaining'] = String(authResult.remainingQuota);
+    }
+
     return {
       statusCode: 200,
-      headers: {
-        'Content-Type': contentType,
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
-      },
+      headers: headers,
       body:
         format === 'png'
           ? imageData.toString('base64') // PNG as base64 for API Gateway

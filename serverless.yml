@@ -11,12 +11,9 @@ provider:
   timeout: 30 # 30 seconds max execution time
   environment:
     NODE_ENV: production
-    DB_SECRET_NAME: ${env:DB_SECRET_NAME, ''} # Name of secret in AWS Secrets Manager
-    TOKEN_CACHE_TTL: ${env:TOKEN_CACHE_TTL, '300'} # Cache TTL in seconds (default: 5 minutes)
-    DB_POOL_SIZE: ${env:DB_POOL_SIZE, '2'} # Connection pool size (default: 2)
-    DB_CONNECTION_TIMEOUT: ${env:DB_CONNECTION_TIMEOUT, '10000'} # Connection timeout in ms
-    DB_IDLE_TIMEOUT: ${env:DB_IDLE_TIMEOUT, '30000'} # Idle timeout in ms
-    DB_SSL: ${env:DB_SSL, 'false'} # Enable SSL for database connection
+    JAAS_BASE_URL: ${env:JAAS_BASE_URL, ''} # JAAS service base URL (e.g., https://jaas.example.com/api)
+    JAAS_PRODUCT_NAME: ${env:JAAS_PRODUCT_NAME, 'codetoimage'} # Product name in JAAS
+    JAAS_TIMEOUT: ${env:JAAS_TIMEOUT, '5000'} # JAAS request timeout in milliseconds (default: 5 seconds)
   iam:
     role:
       statements:
@@ -26,14 +23,6 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: '*'
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-          Resource:
-            # For production, replace '*' with your AWS account ID and specific secret ARN
-            # Example: 'arn:aws:secretsmanager:${self:provider.region}:123456789012:secret:your-db-secret-name-abc123'
-            # The wildcard pattern below allows access to any secret in the region (less secure but flexible)
-            - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:*'
 
 functions:
   generateImage:
@@ -48,14 +37,14 @@ functions:
           method: post
           cors:
             origin: '*'
-            headers:
-              - Content-Type
-              - X-Amz-Date
-              - Authorization
-              - X-Api-Key
-              - X-Amz-Security-Token
-              - X-Amz-User-Agent
-            allowCredentials: false
+          headers:
+            - Content-Type
+            - X-API-Key
+            - Authorization
+            - X-Amz-Date
+            - X-Amz-Security-Token
+            - X-Amz-User-Agent
+          allowCredentials: false
 
 plugins:
   - serverless-dotenv-plugin

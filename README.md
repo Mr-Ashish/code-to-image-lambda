@@ -9,7 +9,8 @@ A serverless AWS Lambda API that converts code snippets into beautiful, syntax-h
 - 🎭 **8 Themes** - GitHub Dark/Light, Dracula, Monokai, Nord, and more
 - ⚡ **Fast** - SVG in <500ms, PNG in 1.5-2.5s (warm)
 - 💰 **Cost Effective** - ~$0.0001 (SVG) to $0.001 (PNG) per request
-- 🔒 **Secure** - Token-based authentication
+- 🔒 **Secure** - API key authentication via JAAS (Java Authentication & Authorization Service)
+- 📊 **Quota Management** - Built-in quota tracking and enforcement
 - 🌈 **Customizable** - Background, padding, line numbers, window controls
 
 ## Prerequisites
@@ -27,8 +28,15 @@ cd code-to-image-lambda
 # Install dependencies
 npm install
 
-# Set your API tokens (comma-separated for multiple tokens)
-export API_TOKENS="your-secret-token-1,your-secret-token-2"
+# Configure JAAS service URL (required)
+export JAAS_BASE_URL="https://jaas.example.com/api"
+# export JAAS_BASE_URL="http://localhost:8080/api"
+
+# Optional: Configure product name (default: codetoimage)
+export JAAS_PRODUCT_NAME="codetoimage"
+
+# Optional: Configure timeout (default: 5000ms)
+export JAAS_TIMEOUT="5000"
 ```
 
 ## Local Development
@@ -40,9 +48,9 @@ npm run local
 # In another terminal, test with curl
 curl -X POST http://localhost:3000/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "code": "console.log(\"Hello World\")",
-    "token": "your-secret-token-1",
     "format": "svg"
   }' > code.svg
 ```
@@ -87,13 +95,18 @@ endpoints:
 **Headers:**
 ```
 Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Alternative Header (Bearer Token):**
+```
+Authorization: Bearer your-api-key-here
 ```
 
 **Body:**
 ```json
 {
   "code": "function hello() { console.log('Hello'); }",
-  "token": "your-api-token",
   "language": "javascript",
   "theme": "github-dark",
   "format": "svg",
@@ -109,7 +122,6 @@ Content-Type: application/json
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `code` | string | ✅ Yes | - | The code to syntax highlight |
-| `token` | string | ✅ Yes | - | Your API authentication token |
 | `language` | string | No | `javascript` | Programming language (see supported languages below) |
 | `theme` | string | No | `github-dark` | Color theme (see supported themes below) |
 | `format` | string | No | `svg` | Output format: `svg` or `png` |
@@ -118,16 +130,31 @@ Content-Type: application/json
 | `showLineNumbers` | boolean | No | `true` | Show line numbers |
 | `showWindowControls` | boolean | No | `true` | Show macOS-style window dots |
 
+**Authentication:**
+
+API keys are validated via JAAS (Java Authentication & Authorization Service). Provide your API key using one of these methods:
+- **X-API-Key header** (recommended): `X-API-Key: your-api-key-here`
+- **Authorization Bearer**: `Authorization: Bearer your-api-key-here`
+
 ### Response
 
 **Success (200):**
 - **Content-Type:** `image/svg+xml` or `image/png`
 - **Body:** Binary image data (SVG string or base64-encoded PNG)
+- **Headers:**
+  - `X-RateLimit-Remaining`: Remaining quota for the API key
 
 **Error (401):**
 ```json
 {
-  "error": "Invalid or missing API token"
+  "error": "Invalid API key"
+}
+```
+
+**Error (429):**
+```json
+{
+  "error": "Monthly quota exceeded. Please upgrade your plan or wait for quota reset."
 }
 ```
 
@@ -138,6 +165,14 @@ Content-Type: application/json
 }
 ```
 
+**Error (503):**
+```json
+{
+  "error": "Authentication service temporarily unavailable",
+  "message": "Please try again later."
+}
+```
+
 ## Examples
 
 ### 1. Simple SVG (JavaScript)
@@ -145,9 +180,9 @@ Content-Type: application/json
 ```bash
 curl -X POST https://your-api-url/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
-    "code": "const greeting = \"Hello, World!\"\nconsole.log(greeting)",
-    "token": "your-token"
+    "code": "const greeting = \"Hello, World!\"\nconsole.log(greeting)"
   }' > hello.svg
 ```
 
@@ -156,9 +191,9 @@ curl -X POST https://your-api-url/generate \
 ```bash
 curl -X POST https://your-api-url/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "code": "def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)",
-    "token": "your-token",
     "language": "python",
     "theme": "dracula",
     "format": "png"
@@ -170,9 +205,9 @@ curl -X POST https://your-api-url/generate \
 ```bash
 curl -X POST https://your-api-url/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "code": "package main\n\nfunc main() {\n    println(\"Hello, Go!\")\n}",
-    "token": "your-token",
     "language": "go",
     "theme": "nord",
     "background": "#1a1a2e",
@@ -187,18 +222,33 @@ curl -X POST https://your-api-url/generate \
 const response = await fetch('https://your-api-url/generate', {
   method: 'POST',
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key-here'
   },
   body: JSON.stringify({
     code: 'function add(a, b) { return a + b; }',
-    token: 'your-token',
     language: 'javascript',
     format: 'png'
   })
 })
 
+// Check for errors
+if (!response.ok) {
+  const error = await response.json()
+  if (response.status === 429) {
+    console.error('Quota exceeded:', error.error)
+  } else if (response.status === 401) {
+    console.error('Invalid API key')
+  }
+  throw new Error(error.error || 'Request failed')
+}
+
 const imageBlob = await response.blob()
 const imageUrl = URL.createObjectURL(imageBlob)
+
+// Get remaining quota from headers
+const remainingQuota = response.headers.get('X-RateLimit-Remaining')
+console.log('Remaining quota:', remainingQuota)
 
 // Use imageUrl in <img> tag
 document.getElementById('code-img').src = imageUrl
@@ -272,16 +322,65 @@ npm run remove
 # Or: serverless remove
 ```
 
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JAAS_BASE_URL` | ✅ Yes | - | Base URL of JAAS service (e.g., `https://jaas.example.com/api`) |
+| `JAAS_PRODUCT_NAME` | No | `codetoimage` | Product name configured in JAAS |
+| `JAAS_TIMEOUT` | No | `5000` | Request timeout in milliseconds |
+
+### Setting Environment Variables
+
+**For Local Development:**
+```bash
+export JAAS_BASE_URL="http://localhost:8080/api"
+export JAAS_PRODUCT_NAME="codetoimage"
+```
+
+**For Deployment:**
+```bash
+# Set before deploying
+export JAAS_BASE_URL="https://jaas.example.com/api"
+serverless deploy --stage prod
+```
+
+Or add to `.env` file (with serverless-dotenv-plugin):
+```env
+JAAS_BASE_URL=https://jaas.example.com/api
+JAAS_PRODUCT_NAME=codetoimage
+JAAS_TIMEOUT=5000
+```
+
 ## Troubleshooting
 
-### "Invalid or missing API token"
+### "API key is required"
 
-Make sure you've set the `API_TOKENS` environment variable before deployment:
+Make sure you're providing the API key via header:
+- `X-API-Key: your-api-key-here` (recommended)
+- `Authorization: Bearer your-api-key-here`
 
-```bash
-export API_TOKENS="token1,token2"
-serverless deploy
-```
+### "Invalid API key"
+
+- Verify your API key is correct
+- Check that the API key is active in JAAS
+- Ensure the API key has access to the `codetoimage` product
+
+### "Monthly quota exceeded"
+
+Your API key has reached its monthly quota limit. Options:
+- Upgrade your subscription plan
+- Wait for the monthly quota reset
+- Contact support to add more quota
+
+### "Authentication service temporarily unavailable"
+
+- Check that `JAAS_BASE_URL` is correctly configured
+- Verify JAAS service is running and accessible
+- Check network connectivity from Lambda to JAAS
+- Review Lambda CloudWatch logs for detailed error messages
 
 ### "Syntax highlighting failed"
 
@@ -308,7 +407,8 @@ npm run logs
 │   Client    │
 └──────┬──────┘
        │ POST /generate
-       │ {code, token, ...}
+       │ X-API-Key: ...
+       │ {code, ...}
        ▼
 ┌─────────────────────┐
 │  API Gateway        │
@@ -318,11 +418,13 @@ npm run logs
 ┌─────────────────────────────────┐
 │  Lambda (Node.js 20)            │
 │  ┌──────────────────────────┐   │
-│  │ 1. Validate token        │   │
-│  │ 2. Shiki highlighting    │   │
-│  │ 3. Build HTML template   │   │
-│  │ 4a. SVG (string wrap)    │   │
-│  │ 4b. PNG (Puppeteer)      │   │
+│  │ 1. Extract API key      │   │
+│  │ 2. Validate via JAAS     │───┼──▶ JAAS Service
+│  │ 3. Check quota          │   │   (Authentication)
+│  │ 4. Shiki highlighting   │   │
+│  │ 5. Build HTML template   │   │
+│  │ 6a. SVG (string wrap)    │   │
+│  │ 6b. PNG (Puppeteer)      │   │
 │  └──────────────────────────┘   │
 │  + Chromium Lambda Layer         │
 └──────┬──────────────────────────┘
