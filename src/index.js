@@ -128,7 +128,7 @@ exports.handler = async (event) => {
     }
 
     // Validate format
-    if (format !== 'svg' && format !== 'png') {
+    if (format !== 'svg' && format !== 'png' && format !== 'base64') {
       return {
         statusCode: 400,
         headers: {
@@ -136,7 +136,7 @@ exports.handler = async (event) => {
           'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
-          error: 'Invalid format. Must be "svg" or "png"',
+          error: 'Invalid format. Must be "svg", "png", or "base64"',
         }),
       };
     }
@@ -180,13 +180,20 @@ exports.handler = async (event) => {
     });
 
     // Step 3: Generate image based on format
-    let imageData, contentType;
+    let imageData, contentType, isBase64Format = false;
 
     if (format === 'png') {
-      // Generate PNG using Puppeteer
+      // Generate PNG using Puppeteer (binary response)
       console.log('Generating PNG with Puppeteer...');
       imageData = await generatePNG(html);
       contentType = 'image/png';
+    } else if (format === 'base64') {
+      // Generate PNG and return as base64 string in JSON (for n8n workflows)
+      console.log('Generating PNG for base64 output...');
+      const pngBuffer = await generatePNG(html);
+      imageData = pngBuffer.toString('base64');
+      contentType = 'application/json';
+      isBase64Format = true;
     } else {
       // Generate SVG (fast, no browser needed)
       console.log('Generating SVG...');
@@ -194,7 +201,7 @@ exports.handler = async (event) => {
       contentType = 'image/svg+xml';
     }
 
-    // Step 4: Return binary response with quota information in headers
+    // Step 4: Return response with quota information in headers
     const headers = {
       'Content-Type': contentType,
       'Access-Control-Allow-Origin': '*',
@@ -206,15 +213,31 @@ exports.handler = async (event) => {
       headers['X-RateLimit-Remaining'] = String(authResult.remainingQuota);
     }
 
-    return {
-      statusCode: 200,
-      headers: headers,
-      body:
-        format === 'png'
-          ? imageData.toString('base64') // PNG as base64 for API Gateway
-          : imageData, // SVG as string
-      isBase64Encoded: format === 'png',
-    };
+    // Return appropriate response based on format
+    if (isBase64Format) {
+      // Base64 format: Return JSON with base64 string, filename, and mime type
+      return {
+        statusCode: 200,
+        headers: headers,
+        body: JSON.stringify({
+          data: imageData,
+          mimeType: 'image/png',
+          fileName: `code-${Date.now()}.png`,
+        }),
+        isBase64Encoded: false,
+      };
+    } else {
+      // PNG or SVG: Return binary/text response
+      return {
+        statusCode: 200,
+        headers: headers,
+        body:
+          format === 'png'
+            ? imageData.toString('base64') // PNG as base64 for API Gateway
+            : imageData, // SVG as string
+        isBase64Encoded: format === 'png',
+      };
+    }
   } catch (error) {
     console.error('Lambda handler error:', error);
     return {
